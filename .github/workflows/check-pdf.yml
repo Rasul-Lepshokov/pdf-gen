@@ -1,0 +1,33 @@
+name: Check PDF and Notify Slack
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # каждые 10 минут
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  check-pdf:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Run PDF check
+        id: check
+        run: node check-pdf.js
+        continue-on-error: true
+
+      - name: Notify Slack on failure
+        if: steps.check.outcome == 'failure'
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"❌ *PDF check failed!* URL: https://fg-trondheim.marscloud.dev/pdf-page/giftcard/608be9c29984d900219cd4b5\"}" \
+          ${{ secrets.SLACK_WEBHOOK_URL }}
