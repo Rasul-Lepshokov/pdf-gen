@@ -1,8 +1,12 @@
-name: Check PDF and Notify Slack
+name: Check PDF and Notify Slack / Restart EC2
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # каждые 10 минут
+    # каждые 10 минут с 08:30 до 23:00
+    - cron: '*/10 8-22 * * *'   # с 8:00 до 22:59 каждые 10 минут
+    - cron: '30 23 * * *'       # в 23:30 один запуск
+    # каждый час с 00:00 до 08:29
+    - cron: '0 0-8 * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -25,9 +29,36 @@ jobs:
         run: node check-pdf.js
         continue-on-error: true
 
-      - name: Notify Slack on failure
+      - name: Notify Slack on PDF failure
         if: steps.check.outcome == 'failure'
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data "{\"text\":\"❌ *PDF check failed!* URL: https://fg-trondheim.marscloud.dev/pdf-page/giftcard/608be9c29984d900219cd4b5\"}" \
+          --data "{\"text\":\"❌ *PDF check failed!*\nURL: https://fg-trondheim.marscloud.dev/pdf-page/giftcard/608be9c29984d900219cd4b5\"}" \
           ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Fully restart EC2 instance if PDF check failed
+        if: steps.check.outcome == 'failure'
+        run: |
+          echo "⚠️ PDF не работает. Останавливаю EC2-инстанс ${{ secrets.EC2_INSTANCE_ID }}..."
+          aws ec2 stop-instances \
+            --instance-ids ${{ secrets.EC2_INSTANCE_ID }} \
+            --region ${{ secrets.AWS_REGION }}
+
+          echo "⌛ Ожидаю полной остановки EC2..."
+          aws ec2 wait instance-stopped \
+            --instance-ids ${{ secrets.EC2_INSTANCE_ID }} \
+            --region ${{ secrets.AWS_REGION }}
+
+          echo "▶️ Запускаю EC2-инстанс заново..."
+          aws ec2 start-instances \
+            --instance-ids ${{ secrets.EC2_INSTANCE_ID }} \
+            --region ${{ secrets.AWS_REGION }}
+
+          echo "📣 Отправляю уведомление в Slack..."
+          curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"🔁 *EC2 instance \`${{ secrets.EC2_INSTANCE_ID }}\` restarted* после сбоя PDF.\"}" \
+          ${{ secrets.SLACK_WEBHOOK_URL }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
